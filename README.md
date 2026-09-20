@@ -27,7 +27,7 @@ The repository also includes tools and data for GGUF, imatrix, quality, and spee
 > [`docs/MULTIGPU_MACPRO.md`](docs/MULTIGPU_MACPRO.md).
 >
 > Upstream is [`antirez/ds4`](https://github.com/antirez/ds4); this fork tracks
-> commit `8db1d1d`. The CPU backend remains the recommended configuration for
+> commit `0aaea5a`. The CPU backend remains the recommended configuration for
 > single-stream use on these Intel/AMD machines — see the notes for measurements.
 
 ## Supported hardware
@@ -35,6 +35,16 @@ The repository also includes tools and data for GGUF, imatrix, quality, and spee
 * **Metal**, the primary target, on Macs with 96 GB or more. Smaller machines
   can use SSD streaming. SSD streaming is also needed in order to run very
   large models such as full GLM 5.x (not Flash) on 128GB systems.
+  * **Intel Macs with AMD Radeon GPUs** run the same Metal backend. A portable
+    `simdgroup_matrix` fallback stands in for the builtins those GPUs accept but
+    cannot lower, and residency sets are treated as the optional scheduling hint
+    they are. Multiple AMD devices are used together by running **one process per
+    GPU** (network tensor or pipeline parallelism) and pinning each rank with
+    `DS4_METAL_DEVICE_INDEX` or `DS4_METAL_DEVICE_NAME`; `DS4_LOCK_FILE` gives
+    each rank its own instance lock. These machines have no unified memory, so
+    for a single stream the CPU backend is usually faster. Measurements and
+    recipes are in [`docs/MACPRO_AMD_PORT.md`](docs/MACPRO_AMD_PORT.md) and
+    [`docs/MULTIGPU_MACPRO.md`](docs/MULTIGPU_MACPRO.md).
 * **NVIDIA CUDA**, the DGX Spark is our main gaol. DwarfStar also supports multi-GPU systems that are not supported by other backends, for instance it can run DeepSeek v4 Flash on Ada Lovelace cards.
 * **ROCm** on Strix Halo systems such as the Framework Desktop.
 
