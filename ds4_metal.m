@@ -820,6 +820,9 @@ static int g_metal4_queue_supported;
 static int g_metal4_m5_neural_accelerators_hint;
 static int g_metal4_tensor_api_enabled;
 static int g_metal4_tensor_api_compile_supported;
+/* Non-Apple7 GPUs (Intel Macs with AMD Radeon cards) cannot lower the
+ * simdgroup_matrix builtins; the portable shim is compiled in instead. */
+static int g_simdgroup_mm_supported = 1;
 static char g_metal_device_name[128];
 static int ds4_gpu_model_map_log_enabled(void);
 static int ds4_gpu_stream_expert_cache_note_expert_size(
@@ -2146,9 +2149,18 @@ static int ds4_gpu_model_residency_request_views(void) {
         NSError *error = nil;
         g_model_residency_set = [g_device newResidencySetWithDescriptor:desc error:&error];
         if (!g_model_residency_set) {
-            fprintf(stderr, "ds4: Metal model residency set creation failed: %s\n",
-                    [[error localizedDescription] UTF8String]);
-            return 0;
+            /*
+             * Residency sets are a scheduling hint for model views that are not
+             * fully resident in device memory.  Some Metal 3 devices (the AMD
+             * Radeon cards on Intel Macs) do not implement
+             * newResidencySetWithDescriptor: and return nil without an error.
+             * Inference stays correct without the hint, so warn and continue.
+             */
+            fprintf(stderr,
+                    "ds4: Metal model residency set unavailable (%s); "
+                    "continuing without the residency hint\n",
+                    error ? [[error localizedDescription] UTF8String] : "unsupported");
+            return 1;
         }
 
         for (uint32_t i = 0; i < g_model_view_count; i++) {
@@ -4760,6 +4772,7 @@ static NSString *ds4_gpu_full_source(void) {
      * run can swap one source file without changing the executable.
      */
     NSArray<NSArray<NSString *> *> *required_sources = @[
+        @[@"DS4_METAL_SIMDGROUP_SHIM_SOURCE", @"metal/simdgroup_shim.metal"],
         @[@"DS4_METAL_FLASH_ATTN_SOURCE", @"metal/flash_attn.metal"],
         @[@"DS4_METAL_DENSE_SOURCE",      @"metal/dense.metal"],
         @[@"DS4_METAL_GLM53_BF16_SOURCE", @"metal/glm53_bf16.metal"],
@@ -6901,6 +6914,24 @@ int ds4_gpu_init(void) {
         if (g_metal4_tensor_api_enabled) {
             macros[@"DS4_METAL_HAS_TENSOR"] = @"1";
             fprintf(stderr, "ds4: Metal 4 tensor API enabled for Tensor kernels\n");
+        }
+
+        /*
+         * The simdgroup_matrix builtins only lower on Apple GPUs.  On every
+         * other Metal device (Intel Macs with AMD Radeon cards) pipeline
+         * creation fails with "SC compilation failure / There is a call to an
+         * undefined label", so compile the portable fallback into the library
+         * and let the kernels run unchanged.
+         */
+        const int simdgroup_mm_disabled =
+            ds4_gpu_env_bool("DS4_METAL_DISABLE_SIMDGROUP_SHIM") > 0;
+        g_simdgroup_mm_supported =
+            [g_device supportsFamily:MTLGPUFamilyApple7] && !simdgroup_mm_disabled;
+        if (!g_simdgroup_mm_supported) {
+            macros[@"DS4_METAL_SIMDGROUP_SHIM"] = @"1";
+            fprintf(stderr,
+                    "ds4: Metal simdgroup matrix unavailable on this GPU; "
+                    "using the portable SIMD-group shim\n");
         }
 
         const int drift_hc_stable        = ds4_gpu_env_bool("DS4_METAL_HC_STABLE")          != 0; // default ON

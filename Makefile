@@ -1,8 +1,15 @@
 CC ?= cc
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
 
+# clang selects the native CPU differently per target: Apple Silicon accepts
+# -mcpu=native, while x86_64 Darwin only understands -march=native.
 ifeq ($(UNAME_S),Darwin)
+ifeq ($(UNAME_M),x86_64)
+NATIVE_CPU_FLAG ?= -march=native
+else
 NATIVE_CPU_FLAG ?= -mcpu=native
+endif
 else
 NATIVE_CPU_FLAG ?= -march=native
 endif
