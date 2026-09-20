@@ -18,6 +18,18 @@ We test things in integration: model loading, prompt rendering,
 tool calls, KV state, the HTTP server, and the coding agent are built and tested together.
 The repository also includes tools and data for GGUF, imatrix, quality, and speed.
 
+> **Fork note (`thread3d/ds4`).** This fork adds an Intel Mac Pro / AMD Radeon
+> Metal path on top of upstream DwarfStar: an x86_64 macOS build fix, a portable
+> `simdgroup_matrix` fallback for AMD GPUs (which accept the builtins but cannot
+> lower them), non-fatal residency sets, and Metal device selection for
+> one-process-per-GPU deployment. See
+> [`docs/MACPRO_AMD_PORT.md`](docs/MACPRO_AMD_PORT.md) and
+> [`docs/MULTIGPU_MACPRO.md`](docs/MULTIGPU_MACPRO.md).
+>
+> Upstream is [`antirez/ds4`](https://github.com/antirez/ds4); this fork tracks
+> commit `8db1d1d`. The CPU backend remains the recommended configuration for
+> single-stream use on these Intel/AMD machines — see the notes for measurements.
+
 ## Supported hardware
 
 * **Metal**, the primary target, on Macs with 96 GB or more. Smaller machines
