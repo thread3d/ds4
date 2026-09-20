@@ -6854,12 +6854,72 @@ typedef struct {
  * session uses. Shape-dependent kernels with function constants are built
  * lazily by the small ds4_gpu_get_* caches, so startup stays predictable
  * while long-context prefill and decode can still pick specialized variants. */
+/*
+ * Multi-GPU deployment on macOS needs one process per device (the in-process
+ * multi-tier executor is CUDA-only).  These environment variables let the
+ * caller pin a process to a specific Metal device:
+ *
+ *   DS4_METAL_DEVICE_INDEX=N     index into MTLCopyAllDevices()
+ *   DS4_METAL_DEVICE_NAME=SUBSTR case-insensitive substring of the device name
+ *
+ * With neither set the system default device is used, which is the historical
+ * behaviour.  Name matching is the stable form on machines whose device order
+ * changes across reboots.
+ */
+static id<MTLDevice> ds4_gpu_select_device(void) {
+    const char *index_env = getenv("DS4_METAL_DEVICE_INDEX");
+    const char *name_env  = getenv("DS4_METAL_DEVICE_NAME");
+    const int want_index = (index_env && index_env[0]) ? atoi(index_env) : -1;
+    const int want_name  = (name_env && name_env[0]) ? 1 : 0;
+
+    if (want_index < 0 && !want_name) {
+        return MTLCreateSystemDefaultDevice();
+    }
+
+#if TARGET_OS_OSX
+    NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
+    if (devices.count == 0) return nil;
+
+    /* Always print the enumeration when a selection is requested, so the
+     * caller can see the indices used for the next process. */
+    fprintf(stderr, "ds4: Metal devices:");
+    for (NSUInteger i = 0; i < devices.count; i++) {
+        id<MTLDevice> d = devices[i];
+        fprintf(stderr, " [%lu] %s%s", (unsigned long)i, [[d name] UTF8String],
+                d.hasUnifiedMemory ? "" : " (discrete)");
+    }
+    fprintf(stderr, "\n");
+
+    id<MTLDevice> chosen = nil;
+    if (want_name) {
+        for (NSUInteger i = 0; i < devices.count; i++) {
+            const char *n = [[devices[i] name] UTF8String];
+            if (n && strcasestr(n, name_env)) { chosen = devices[i]; break; }
+        }
+        if (!chosen) {
+            fprintf(stderr, "ds4: no Metal device name contains '%s'\n", name_env);
+            return nil;
+        }
+    } else {
+        if (want_index < 0 || (NSUInteger)want_index >= devices.count) {
+            fprintf(stderr, "ds4: DS4_METAL_DEVICE_INDEX=%d out of range (0..%lu)\n",
+                    want_index, (unsigned long)devices.count - 1);
+            return nil;
+        }
+        chosen = devices[(NSUInteger)want_index];
+    }
+    return chosen;
+#else
+    return MTLCreateSystemDefaultDevice();
+#endif
+}
+
 int ds4_gpu_init(void) {
     if (g_initialized) return 1;
 
     @autoreleasepool {
         ds4_gpu_decode_pipeline_fast_cache_reset();
-        g_device = MTLCreateSystemDefaultDevice();
+        g_device = ds4_gpu_select_device();
         if (!g_device) {
             fprintf(stderr, "ds4: Metal device not available\n");
             return 0;
